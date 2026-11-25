@@ -9,7 +9,7 @@ PREFIX   ?= /usr/local
 
 all: $(TARGET)
 
-$(TARGET): $(SRC)
+$(TARGET): $(SRC) src/layouts.inc
 	@mkdir -p $(BUILD)
 	$(FPC) $(FPCFLAGS) -FE$(BUILD) -FU$(BUILD) $(SRC)
 

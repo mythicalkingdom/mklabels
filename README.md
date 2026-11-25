@@ -38,6 +38,8 @@ build/mklabels -i image [options]
 | `-s WxH` | Page size (default `8.5x11in`) |
 | `-S file`, `--save file` | Save the parameters to a JSON file |
 | `-j file`, `--load file` | Load parameters from a JSON file; options given on the command line override it |
+| `-L part`, `--layout part` | Use a built-in Avery US Letter sheet layout (see below) |
+| `--list-layouts [text]` | List the built-in layouts, optionally filtered by text |
 | `-u unit` | Default unit for lengths without a suffix (default `in`) |
 
 Lengths accept the suffixes `in`, `mm`, `cm` and `pt`, e.g. `0.5in`, `12mm`.
@@ -86,6 +88,31 @@ Fixed width and height (the image is stretched to fit):
 ```
 build/mklabels -i label.png -w 4in -H 2in -o sheet.pdf
 ```
+
+## Avery layouts
+
+`--layout` sets the page size, margins, spacing, label size and grid for a
+standard Avery US Letter sheet, so you only supply the image:
+
+```
+build/mklabels --list-layouts address        # find a part number
+build/mklabels -i label.png --layout 5160 -o sheet.pdf
+build/mklabels -i label.png -L "Avery 5163" -o shipping.pdf
+```
+
+295 part numbers are built in (5160, 5163, 5167, 8160 and many more,
+including the equivalent look-alike numbers). Part numbers are matched
+ignoring case, spaces and the word "Avery". The image is stretched to the
+label size, so prepare artwork with the same aspect ratio as the label.
+Other options given with `--layout` override its values (e.g. `-l 0.2in` to
+nudge the left margin for your printer). Layouts are portrait only, and the
+grid is limited to the sheet's real number of labels.
+
+The layout data comes from the [gLabels](https://sources.debian.org/src/glabels/3.4.1-6/templates)
+template database (GPL-3.0-or-later) and is generated into `src/layouts.inc`
+by `tools/gen_layouts.py`; see the header of that script for the source file.
+Print a test sheet on plain paper and compare it against a real label sheet
+before using real stock, since printers add their own offsets.
 
 ## Saving and loading parameters
 

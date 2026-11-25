@@ -33,7 +33,18 @@ uses
 const
   PtPerInch = 72.0;
 
+type
+  { A label sheet layout; all lengths in points, page is US Letter portrait. }
+  TLayout = record
+    Part, Desc: string;
+    Cols, Rows: Integer;
+    W, H, Left, Top, HSpace, VSpace: Double;
+  end;
+
+{$I layouts.inc}
+
 var
+  MaxCols, MaxRows: Integer;   { > 0 when a --layout limits the grid }
   ImageFile, OutFile: string;
   DefUnit: string = 'in';
   Left, Top, HSpace, VSpace: Double;
@@ -56,6 +67,9 @@ begin
   WriteLn('  -d dpi      dpi to assume for natural size (default 300)');
   WriteLn('  -p orient   portrait (default) or landscape');
   WriteLn('  -s WxH      page size (default 8.5x11in; e.g. 210x297mm)');
+  WriteLn('  -L part     use a label sheet layout, e.g. 5160 (--layout); sets page,');
+  WriteLn('              margins, spacing, tile size and grid; later options override');
+  WriteLn('  --list-layouts [text]   list the built-in Avery Letter layouts');
   WriteLn('  -u unit     default unit for lengths: in, mm, cm, pt (default in)');
   WriteLn('  -S file     save the parameters to a JSON file (--save)');
   WriteLn('  -j file     load parameters from a JSON file (--load); other options override it');
@@ -129,9 +143,52 @@ var
   Norm: TStringList;   { normalized option name=value, saved to JSON }
 
 const
-  JsonKeys: array[0..11] of string = ('image', 'output', 'left', 'top',
+  JsonKeys: array[0..12] of string = ('layout', 'image', 'output', 'left', 'top',
     'hspace', 'vspace', 'width', 'height', 'dpi', 'orientation', 'pagesize',
     'unit');
+
+{ Normalize a part number: lower case, without the brand name or spaces. }
+function NormPart(const S: string): string;
+begin
+  Result := StringReplace(LowerCase(S), 'avery', '', [rfReplaceAll]);
+  Result := StringReplace(Result, ' ', '', [rfReplaceAll]);
+end;
+
+function FindLayout(const Part: string): Integer;
+var
+  i: Integer;
+  N: string;
+begin
+  N := NormPart(Part);
+  for i := 0 to LayoutCount - 1 do
+    if NormPart(Layouts[i].Part) = N then Exit(i);
+  Result := -1;
+end;
+
+procedure ListLayouts(const Filter: string);
+var
+  i, n: Integer;
+  F, Line: string;
+begin
+  F := LowerCase(Filter);
+  n := 0;
+  WriteLn(Format('%-9s %-7s %-17s %s', ['Part', 'Grid', 'Label size (in)', 'Description']));
+  for i := 0 to LayoutCount - 1 do
+  begin
+    with Layouts[i] do
+    begin
+      Line := Format('%-9s %-7s %-17s %s', [Part,
+        IntToStr(Cols) + 'x' + IntToStr(Rows),
+        Format('%.3f x %.3f', [W / PtPerInch, H / PtPerInch]), Desc]);
+    end;
+    if (F = '') or (Pos(F, LowerCase(Line)) > 0) then
+    begin
+      WriteLn(Line);
+      Inc(n);
+    end;
+  end;
+  WriteLn(n, ' layout(s). Sheet size: US Letter, portrait.');
+end;
 
 { Give a length string an explicit unit so saved files do not depend on -u. }
 function WithUnit(const S: string): string;
@@ -148,6 +205,7 @@ end;
 procedure ApplyOption(const Key, V: string);
 var
   L: string;
+  i: Integer;
 begin
   case Key of
     'image': begin ImageFile := V; Norm.Values[Key] := V; end;
@@ -160,6 +218,17 @@ begin
     'height': begin L := WithUnit(V); ImgH := ParseLen(L, DefUnit); Norm.Values[Key] := L; end;
     'dpi': begin DPI := StrToFloatDef(V, 300, DefaultFormatSettings); Norm.Values[Key] := V; end;
     'pagesize': begin ParsePage(V); Norm.Values[Key] := V; end;
+    'layout': begin
+      i := FindLayout(V);
+      if i < 0 then
+        Die('unknown layout: ' + V + ' (see --list-layouts)');
+      Left := Layouts[i].Left; Top := Layouts[i].Top;
+      HSpace := Layouts[i].HSpace; VSpace := Layouts[i].VSpace;
+      ImgW := Layouts[i].W; ImgH := Layouts[i].H;
+      MaxCols := Layouts[i].Cols; MaxRows := Layouts[i].Rows;
+      PageW := 8.5 * PtPerInch; PageH := 11 * PtPerInch;
+      Norm.Values['layout'] := Layouts[i].Part;
+    end;
     'unit': DefUnit := LowerCase(V);   { only affects unitless values after it }
     'orientation': begin
       L := LowerCase(V);
@@ -196,8 +265,12 @@ begin
     if not (D is TJSONObject) then Die('json file must contain an object');
     O := TJSONObject(D);
     { a saved file is self-contained: its lengths already carry units }
+    { the layout sets many values at once, so apply it before the rest }
+    i := O.IndexOfName('layout');
+    if i >= 0 then ApplyOption('layout', O.Items[i].AsString);
     for i := 0 to O.Count - 1 do
-      ApplyOption(O.Names[i], O.Items[i].AsString);
+      if O.Names[i] <> 'layout' then
+        ApplyOption(O.Names[i], O.Items[i].AsString);
   finally
     D.Free;
   end;
@@ -248,6 +321,7 @@ begin
   ImgW := 0; ImgH := 0;
   PageW := 8.5 * PtPerInch; PageH := 11 * PtPerInch;
   Landscape := False;
+  MaxCols := 0; MaxRows := 0;
   SaveFile := '';
   Norm := TStringList.Create;
 
@@ -265,6 +339,27 @@ begin
     begin
       Need;
       LoadJson(V);
+    end
+    else if ParamStr(i) = '--list-layouts' then
+    begin
+      V := '';
+      if (i < ParamCount) and (Copy(ParamStr(i + 1), 1, 1) <> '-') then
+        V := ParamStr(i + 1);
+      ListLayouts(V);
+      Halt(0);
+    end;
+    Inc(i);
+  end;
+
+  { second pass: a layout sets many values at once, so apply it before the
+    individual options, which can then override it }
+  i := 1;
+  while i <= ParamCount do
+  begin
+    if (ParamStr(i) = '-L') or (ParamStr(i) = '--layout') then
+    begin
+      Need;
+      ApplyOption('layout', V);
     end;
     Inc(i);
   end;
@@ -286,7 +381,7 @@ begin
       '-d': Key := 'dpi';
       '-s': Key := 'pagesize';
       '-p': Key := 'orientation';
-      '-u', '-j', '--load': Need;   { handled in first pass }
+      '-u', '-j', '--load', '-L', '--layout': Need;   { handled earlier }
       '-S', '--save': begin Need; SaveFile := V; end;
       '-?', '--help': Usage;
     else
@@ -393,6 +488,9 @@ begin
     Alpha := PageW; PageW := PageH; PageH := Alpha;
   end;
 
+  if (MaxCols > 0) and Landscape then
+    Die('layouts are for portrait pages; remove -p landscape');
+
   { count tiles that fit completely }
   Cols := 0;
   if PageW - Left >= PW - 1e-6 then
@@ -400,6 +498,8 @@ begin
   Rows := 0;
   if PageH - Top >= PH - 1e-6 then
     Rows := 1 + Floor((PageH - Top - PH + 1e-6) / (PH + VSpace));
+  if MaxCols > 0 then Cols := Min(Cols, MaxCols);
+  if MaxRows > 0 then Rows := Min(Rows, MaxRows);
   if (Cols < 1) or (Rows < 1) then
     Die('image does not fit on the page with these margins');
 
