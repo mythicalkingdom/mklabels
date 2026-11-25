@@ -1,0 +1,349 @@
+{ mklabels - tile an image onto a PDF page.
+
+  Usage: mklabels -i image [-o out.pdf] [-l left] [-t top] [-h hspace]
+                  [-v vspace] [-p portrait|landscape] [-w width] [-H height]
+                  [-s pagewidth x pageheight] [-u unit]
+
+  Lengths accept a unit suffix: in, mm, cm, pt (default unit set by -u,
+  initially inches).  The image is drawn at its natural size (pixels at
+  its stored DPI, or 300 dpi if unknown) unless -w / -H are given. }
+program mklabels;
+
+{$mode objfpc}{$H+}
+
+uses
+  SysUtils, Classes, Math, zstream,
+  FPImage, FPReadPNG, FPReadJPEG, FPReadBMP, FPReadGIF, FPReadTiff,
+  FPReadPNM, FPReadTGA, FPReadPCX;
+
+const
+  PtPerInch = 72.0;
+
+var
+  ImageFile, OutFile: string;
+  DefUnit: string = 'in';
+  Left, Top, HSpace, VSpace: Double;
+  ImgW, ImgH: Double;          { in points; 0 = take from image }
+  PageW, PageH: Double;        { points, portrait orientation }
+  Landscape: Boolean;
+  DPI: Double = 300;
+
+procedure Usage;
+begin
+  WriteLn('Usage: mklabels -i image [options]');
+  WriteLn('  -i file     input image (png, jpg, bmp, gif, tif, pnm, tga, pcx)');
+  WriteLn('  -o file     output pdf (default: tiled.pdf)');
+  WriteLn('  -l len      left margin   (default 0)');
+  WriteLn('  -t len      top margin    (default 0)');
+  WriteLn('  -h len      horizontal spacing between tiles (default 0)');
+  WriteLn('  -v len      vertical spacing between tiles   (default 0)');
+  WriteLn('  -w len      tile width  (default: image pixels at --dpi)');
+  WriteLn('  -H len      tile height (default: keep aspect, or from dpi)');
+  WriteLn('  -d dpi      dpi to assume for natural size (default 300)');
+  WriteLn('  -p orient   portrait (default) or landscape');
+  WriteLn('  -s WxH      page size (default 8.5x11in; e.g. 210x297mm)');
+  WriteLn('  -u unit     default unit for lengths: in, mm, cm, pt (default in)');
+  WriteLn('Lengths may carry a suffix, e.g. 0.5in, 12mm, 1.5cm, 36pt.');
+  Halt(1);
+end;
+
+procedure Die(const Msg: string);
+begin
+  WriteLn(StdErr, 'Error: ', Msg);
+  Halt(2);
+end;
+
+{ Parse a length like "12mm", "0.5", "1in" into points. }
+function ParseLen(S: string; const Unit_: string): Double;
+var
+  i: Integer;
+  Num, U: string;
+  V: Double;
+  FS: TFormatSettings;
+begin
+  FS := DefaultFormatSettings;
+  FS.DecimalSeparator := '.';
+  S := Trim(LowerCase(S));
+  i := Length(S);
+  while (i > 0) and not (S[i] in ['0'..'9', '.']) do Dec(i);
+  Num := Copy(S, 1, i);
+  U := Trim(Copy(S, i + 1, MaxInt));
+  if U = '' then U := Unit_;
+  if not TryStrToFloat(Num, V, FS) then Die('bad length: ' + S);
+  case U of
+    'in', 'inch', 'inches', '"': Result := V * PtPerInch;
+    'mm': Result := V / 25.4 * PtPerInch;
+    'cm': Result := V / 2.54 * PtPerInch;
+    'pt', 'point', 'points': Result := V;
+  else
+    Die('unknown unit: ' + U);
+  end;
+end;
+
+procedure ParsePage(const S: string);
+var
+  p: Integer;
+  A, B, U, T: string;
+  i: Integer;
+begin
+  T := LowerCase(S);
+  p := Pos('x', T);
+  if p = 0 then Die('page size must be WxH, e.g. 8.5x11in');
+  A := Copy(T, 1, p - 1);
+  B := Copy(T, p + 1, MaxInt);
+  { unit suffix may be on either part; apply trailing unit of B to A too }
+  i := Length(B);
+  while (i > 0) and not (B[i] in ['0'..'9', '.']) do Dec(i);
+  U := Copy(B, i + 1, MaxInt);
+  if U = '' then U := DefUnit;
+  PageW := ParseLen(A, U);
+  PageH := ParseLen(B, U);
+end;
+
+function FmtF(V: Double): string;
+var
+  FS: TFormatSettings;
+begin
+  FS := DefaultFormatSettings;
+  FS.DecimalSeparator := '.';
+  Result := FormatFloat('0.####', V, FS);
+end;
+
+procedure ParseArgs;
+var
+  i: Integer;
+  A, V: string;
+  procedure Need;
+  begin
+    if i >= ParamCount then Usage;
+    Inc(i);
+    V := ParamStr(i);
+  end;
+begin
+  ImageFile := '';
+  OutFile := 'tiled.pdf';
+  Left := 0; Top := 0; HSpace := 0; VSpace := 0;
+  ImgW := 0; ImgH := 0;
+  PageW := 8.5 * PtPerInch; PageH := 11 * PtPerInch;
+  Landscape := False;
+
+  { first pass: -u so units apply to everything regardless of order }
+  i := 1;
+  while i <= ParamCount do
+  begin
+    if ParamStr(i) = '-u' then
+    begin
+      Need;
+      DefUnit := LowerCase(V);
+    end;
+    Inc(i);
+  end;
+
+  i := 1;
+  while i <= ParamCount do
+  begin
+    A := ParamStr(i);
+    case A of
+      '-i': begin Need; ImageFile := V; end;
+      '-o': begin Need; OutFile := V; end;
+      '-l': begin Need; Left := ParseLen(V, DefUnit); end;
+      '-t': begin Need; Top := ParseLen(V, DefUnit); end;
+      '-h': begin Need; HSpace := ParseLen(V, DefUnit); end;
+      '-v': begin Need; VSpace := ParseLen(V, DefUnit); end;
+      '-w': begin Need; ImgW := ParseLen(V, DefUnit); end;
+      '-H': begin Need; ImgH := ParseLen(V, DefUnit); end;
+      '-d': begin Need; DPI := StrToFloatDef(V, 300, DefaultFormatSettings); end;
+      '-u': Need;
+      '-s': begin Need; ParsePage(V); end;
+      '-p': begin
+        Need;
+        V := LowerCase(V);
+        if (V = 'l') or (V = 'landscape') then Landscape := True
+        else if (V = 'p') or (V = 'portrait') then Landscape := False
+        else Die('orientation must be portrait or landscape');
+      end;
+      '-?', '--help': Usage;
+    else
+      if (ImageFile = '') and (Copy(A, 1, 1) <> '-') then ImageFile := A
+      else Usage;
+    end;
+    Inc(i);
+  end;
+  if ImageFile = '' then Usage;
+end;
+
+{ ---- PDF writer ---- }
+
+var
+  PDF: TMemoryStream;
+  Offsets: array of Int64;
+
+procedure W(const S: string);
+begin
+  if S <> '' then PDF.WriteBuffer(S[1], Length(S));
+end;
+
+procedure BeginObj(N: Integer);
+begin
+  if Length(Offsets) <= N then SetLength(Offsets, N + 1);
+  Offsets[N] := PDF.Position;
+  W(IntToStr(N) + ' 0 obj' + #10);
+end;
+
+procedure EndObj;
+begin
+  W('endobj' + #10);
+end;
+
+function LoadImage(const FN: string; out Img: TFPMemoryImage): Boolean;
+var
+  Reader: TFPCustomImageReader;
+  Ext: string;
+begin
+  Result := False;
+  Ext := LowerCase(ExtractFileExt(FN));
+  case Ext of
+    '.png': Reader := TFPReaderPNG.Create;
+    '.jpg', '.jpeg', '.jpe', '.jfif': Reader := TFPReaderJPEG.Create;
+    '.bmp': Reader := TFPReaderBMP.Create;
+    '.gif': Reader := TFPReaderGIF.Create;
+    '.tif', '.tiff': Reader := TFPReaderTiff.Create;
+    '.pbm', '.pgm', '.ppm', '.pnm': Reader := TFPReaderPNM.Create;
+    '.tga': Reader := TFPReaderTarga.Create;
+    '.pcx': Reader := TFPReaderPCX.Create;
+  else
+    Die('unsupported image extension: ' + Ext);
+  end;
+  Img := TFPMemoryImage.Create(0, 0);
+  try
+    Img.LoadFromFile(FN, Reader);
+    Result := True;
+  finally
+    Reader.Free;
+  end;
+end;
+
+var
+  Img: TFPMemoryImage;
+  PW, PH: Double;
+  PxW, PxH, x, y, Cols, Rows, r, c, ObjCount: Integer;
+  Raw, Comp: TMemoryStream;
+  CS: TCompressionStream;
+  Row: array of Byte;
+  Col: TFPColor;
+  Content, XRef: string;
+  Cx, Cy, Alpha: Double;
+  A, R8, G8, B8: Double;
+  StartXRef: Int64;
+  Fn: TFileStream;
+  Count: Integer;
+begin
+  ParseArgs;
+  if not FileExists(ImageFile) then Die('file not found: ' + ImageFile);
+  LoadImage(ImageFile, Img);
+  PxW := Img.Width; PxH := Img.Height;
+  if (PxW = 0) or (PxH = 0) then Die('empty image');
+
+  { tile size in points }
+  if (ImgW > 0) and (ImgH > 0) then begin PW := ImgW; PH := ImgH; end
+  else if ImgW > 0 then begin PW := ImgW; PH := ImgW * PxH / PxW; end
+  else if ImgH > 0 then begin PH := ImgH; PW := ImgH * PxW / PxH; end
+  else begin PW := PxW / DPI * PtPerInch; PH := PxH / DPI * PtPerInch; end;
+
+  if Landscape then
+  begin
+    { swap so width is the long side }
+    if PageW < PageH then begin Alpha := PageW; PageW := PageH; PageH := Alpha; end;
+  end
+  else if PageW > PageH then
+  begin
+    Alpha := PageW; PageW := PageH; PageH := Alpha;
+  end;
+
+  { count tiles that fit completely }
+  Cols := 0;
+  if PageW - Left >= PW - 1e-6 then
+    Cols := 1 + Floor((PageW - Left - PW + 1e-6) / (PW + HSpace));
+  Rows := 0;
+  if PageH - Top >= PH - 1e-6 then
+    Rows := 1 + Floor((PageH - Top - PH + 1e-6) / (PH + VSpace));
+  if (Cols < 1) or (Rows < 1) then
+    Die('image does not fit on the page with these margins');
+
+  { image data: RGB, composite alpha on white }
+  Raw := TMemoryStream.Create;
+  SetLength(Row, PxW * 3);
+  for y := 0 to PxH - 1 do
+  begin
+    for x := 0 to PxW - 1 do
+    begin
+      Col := Img.Colors[x, y];
+      A := Col.alpha / 65535.0;
+      R8 := Col.red / 257.0; G8 := Col.green / 257.0; B8 := Col.blue / 257.0;
+      Row[x * 3]     := Round(R8 * A + 255 * (1 - A));
+      Row[x * 3 + 1] := Round(G8 * A + 255 * (1 - A));
+      Row[x * 3 + 2] := Round(B8 * A + 255 * (1 - A));
+    end;
+    Raw.WriteBuffer(Row[0], Length(Row));
+  end;
+  Raw.Position := 0;
+  Comp := TMemoryStream.Create;
+  CS := TCompressionStream.Create(clDefault, Comp);
+  CS.CopyFrom(Raw, Raw.Size);
+  CS.Free;
+
+  { content stream }
+  Content := 'q' + #10;
+  Count := 0;
+  for r := 0 to Rows - 1 do
+    for c := 0 to Cols - 1 do
+    begin
+      Cx := Left + c * (PW + HSpace);
+      Cy := PageH - Top - r * (PH + VSpace) - PH;  { PDF origin is bottom-left }
+      Content := Content + 'q ' + FmtF(PW) + ' 0 0 ' + FmtF(PH) + ' ' +
+        FmtF(Cx) + ' ' + FmtF(Cy) + ' cm /Im0 Do Q' + #10;
+      Inc(Count);
+    end;
+  Content := Content + 'Q' + #10;
+
+  PDF := TMemoryStream.Create;
+  W('%PDF-1.4' + #10);
+  BeginObj(1); W('<< /Type /Catalog /Pages 2 0 R >>' + #10); EndObj;
+  BeginObj(2); W('<< /Type /Pages /Kids [3 0 R] /Count 1 >>' + #10); EndObj;
+  BeginObj(3);
+  W('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + FmtF(PageW) + ' ' +
+    FmtF(PageH) + '] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>' + #10);
+  EndObj;
+  BeginObj(4);
+  W('<< /Length ' + IntToStr(Length(Content)) + ' >>' + #10 + 'stream' + #10);
+  W(Content);
+  W('endstream' + #10);
+  EndObj;
+  BeginObj(5);
+  W('<< /Type /XObject /Subtype /Image /Width ' + IntToStr(PxW) + ' /Height ' +
+    IntToStr(PxH) + ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length ' +
+    IntToStr(Comp.Size) + ' >>' + #10 + 'stream' + #10);
+  PDF.WriteBuffer(Comp.Memory^, Comp.Size);
+  W(#10 + 'endstream' + #10);
+  EndObj;
+  ObjCount := 6;
+
+  StartXRef := PDF.Position;
+  XRef := 'xref' + #10 + '0 ' + IntToStr(ObjCount) + #10 + '0000000000 65535 f ' + #10;
+  for r := 1 to ObjCount - 1 do
+    XRef := XRef + Format('%.10d 00000 n ', [Offsets[r]]) + #10;
+  W(XRef);
+  W('trailer' + #10 + '<< /Size ' + IntToStr(ObjCount) + ' /Root 1 0 R >>' + #10);
+  W('startxref' + #10 + IntToStr(StartXRef) + #10 + '%%EOF' + #10);
+
+  Fn := TFileStream.Create(OutFile, fmCreate);
+  try
+    Fn.CopyFrom(PDF, 0);
+  finally
+    Fn.Free;
+  end;
+
+  WriteLn(Format('Wrote %s: %d x %d = %d tiles (%.2f x %.2f in each) on %.2f x %.2f in page',
+    [OutFile, Cols, Rows, Count, PW / PtPerInch, PH / PtPerInch,
+     PageW / PtPerInch, PageH / PtPerInch]));
+end.
