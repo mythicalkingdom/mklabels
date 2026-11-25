@@ -12,7 +12,7 @@ program mklabels;
 {$mode objfpc}{$H+}
 
 uses
-  SysUtils, Classes, Math, zstream,
+  SysUtils, Classes, Math, zstream, fpjson, jsonparser,
   FPImage, FPReadPNG, FPReadJPEG, FPReadBMP, FPReadGIF, FPReadTiff,
   FPReadPNM, FPReadTGA, FPReadPCX;
 
@@ -43,6 +43,8 @@ begin
   WriteLn('  -p orient   portrait (default) or landscape');
   WriteLn('  -s WxH      page size (default 8.5x11in; e.g. 210x297mm)');
   WriteLn('  -u unit     default unit for lengths: in, mm, cm, pt (default in)');
+  WriteLn('  -S file     save the parameters to a JSON file (--save)');
+  WriteLn('  -j file     load parameters from a JSON file (--load); other options override it');
   WriteLn('Lengths may carry a suffix, e.g. 0.5in, 12mm, 1.5cm, 36pt.');
   Halt(1);
 end;
@@ -109,10 +111,116 @@ begin
   Result := FormatFloat('0.####', V, FS);
 end;
 
+var
+  Norm: TStringList;   { normalized option name=value, saved to JSON }
+
+const
+  JsonKeys: array[0..11] of string = ('image', 'output', 'left', 'top',
+    'hspace', 'vspace', 'width', 'height', 'dpi', 'orientation', 'pagesize',
+    'unit');
+
+{ Give a length string an explicit unit so saved files do not depend on -u. }
+function WithUnit(const S: string): string;
+var
+  T: string;
+begin
+  T := Trim(LowerCase(S));
+  if (T <> '') and (T[Length(T)] in ['0'..'9', '.']) then T := T + DefUnit;
+  Result := T;
+end;
+
+{ Apply one option (by JSON key name).  Used by both the command line and
+  the JSON loader. }
+procedure ApplyOption(const Key, V: string);
+var
+  L: string;
+begin
+  case Key of
+    'image': begin ImageFile := V; Norm.Values[Key] := V; end;
+    'output': begin OutFile := V; Norm.Values[Key] := V; end;
+    'left': begin L := WithUnit(V); Left := ParseLen(L, DefUnit); Norm.Values[Key] := L; end;
+    'top': begin L := WithUnit(V); Top := ParseLen(L, DefUnit); Norm.Values[Key] := L; end;
+    'hspace': begin L := WithUnit(V); HSpace := ParseLen(L, DefUnit); Norm.Values[Key] := L; end;
+    'vspace': begin L := WithUnit(V); VSpace := ParseLen(L, DefUnit); Norm.Values[Key] := L; end;
+    'width': begin L := WithUnit(V); ImgW := ParseLen(L, DefUnit); Norm.Values[Key] := L; end;
+    'height': begin L := WithUnit(V); ImgH := ParseLen(L, DefUnit); Norm.Values[Key] := L; end;
+    'dpi': begin DPI := StrToFloatDef(V, 300, DefaultFormatSettings); Norm.Values[Key] := V; end;
+    'pagesize': begin ParsePage(V); Norm.Values[Key] := V; end;
+    'unit': DefUnit := LowerCase(V);   { only affects unitless values after it }
+    'orientation': begin
+      L := LowerCase(V);
+      if (L = 'l') or (L = 'landscape') then Landscape := True
+      else if (L = 'p') or (L = 'portrait') then Landscape := False
+      else Die('orientation must be portrait or landscape');
+      if Landscape then Norm.Values[Key] := 'landscape'
+      else Norm.Values[Key] := 'portrait';
+    end;
+  else
+    Die('unknown option in JSON file: ' + Key);
+  end;
+end;
+
+procedure LoadJson(const FN: string);
+var
+  FS: TFileStream;
+  D: TJSONData;
+  O: TJSONObject;
+  i: Integer;
+begin
+  if not FileExists(FN) then Die('json file not found: ' + FN);
+  FS := TFileStream.Create(FN, fmOpenRead or fmShareDenyWrite);
+  try
+    try
+      D := GetJSON(FS);
+    except
+      on E: Exception do Die('cannot parse ' + FN + ': ' + E.Message);
+    end;
+  finally
+    FS.Free;
+  end;
+  try
+    if not (D is TJSONObject) then Die('json file must contain an object');
+    O := TJSONObject(D);
+    { a saved file is self-contained: its lengths already carry units }
+    for i := 0 to O.Count - 1 do
+      ApplyOption(O.Names[i], O.Items[i].AsString);
+  finally
+    D.Free;
+  end;
+end;
+
+procedure SaveJson(const FN: string);
+var
+  O: TJSONObject;
+  i: Integer;
+  K: string;
+  SL: TStringList;
+begin
+  O := TJSONObject.Create;
+  try
+    for i := 0 to High(JsonKeys) do
+    begin
+      K := JsonKeys[i];
+      if (K <> 'unit') and (Norm.IndexOfName(K) >= 0) then
+        O.Add(K, Norm.Values[K]);
+    end;
+    SL := TStringList.Create;
+    try
+      SL.Text := O.FormatJSON;
+      SL.SaveToFile(FN);
+    finally
+      SL.Free;
+    end;
+  finally
+    O.Free;
+  end;
+  WriteLn('Saved parameters to ', FN);
+end;
+
 procedure ParseArgs;
 var
   i: Integer;
-  A, V: string;
+  A, V, SaveFile, Key: string;
   procedure Need;
   begin
     if i >= ParamCount then Usage;
@@ -126,8 +234,11 @@ begin
   ImgW := 0; ImgH := 0;
   PageW := 8.5 * PtPerInch; PageH := 11 * PtPerInch;
   Landscape := False;
+  SaveFile := '';
+  Norm := TStringList.Create;
 
-  { first pass: -u so units apply to everything regardless of order }
+  { first pass: -u applies to everything regardless of order, and --load
+    is applied before the command line so the command line overrides it }
   i := 1;
   while i <= ParamCount do
   begin
@@ -135,6 +246,11 @@ begin
     begin
       Need;
       DefUnit := LowerCase(V);
+    end
+    else if (ParamStr(i) = '-j') or (ParamStr(i) = '--load') then
+    begin
+      Need;
+      LoadJson(V);
     end;
     Inc(i);
   end;
@@ -143,33 +259,36 @@ begin
   while i <= ParamCount do
   begin
     A := ParamStr(i);
+    Key := '';
     case A of
-      '-i': begin Need; ImageFile := V; end;
-      '-o': begin Need; OutFile := V; end;
-      '-l': begin Need; Left := ParseLen(V, DefUnit); end;
-      '-t': begin Need; Top := ParseLen(V, DefUnit); end;
-      '-h': begin Need; HSpace := ParseLen(V, DefUnit); end;
-      '-v': begin Need; VSpace := ParseLen(V, DefUnit); end;
-      '-w': begin Need; ImgW := ParseLen(V, DefUnit); end;
-      '-H': begin Need; ImgH := ParseLen(V, DefUnit); end;
-      '-d': begin Need; DPI := StrToFloatDef(V, 300, DefaultFormatSettings); end;
-      '-u': Need;
-      '-s': begin Need; ParsePage(V); end;
-      '-p': begin
-        Need;
-        V := LowerCase(V);
-        if (V = 'l') or (V = 'landscape') then Landscape := True
-        else if (V = 'p') or (V = 'portrait') then Landscape := False
-        else Die('orientation must be portrait or landscape');
-      end;
+      '-i': Key := 'image';
+      '-o': Key := 'output';
+      '-l': Key := 'left';
+      '-t': Key := 'top';
+      '-h': Key := 'hspace';
+      '-v': Key := 'vspace';
+      '-w': Key := 'width';
+      '-H': Key := 'height';
+      '-d': Key := 'dpi';
+      '-s': Key := 'pagesize';
+      '-p': Key := 'orientation';
+      '-u', '-j', '--load': Need;   { handled in first pass }
+      '-S', '--save': begin Need; SaveFile := V; end;
       '-?', '--help': Usage;
     else
-      if (ImageFile = '') and (Copy(A, 1, 1) <> '-') then ImageFile := A
+      if Copy(A, 1, 1) <> '-' then
+        ApplyOption('image', A)
       else Usage;
+    end;
+    if Key <> '' then
+    begin
+      Need;
+      ApplyOption(Key, V);
     end;
     Inc(i);
   end;
   if ImageFile = '' then Usage;
+  if SaveFile <> '' then SaveJson(SaveFile);
 end;
 
 { ---- PDF writer ---- }

@@ -32,6 +32,8 @@ build/mklabels -i image [options]
 | `-d dpi` | DPI used for the natural size when no `-w`/`-H` (default 300) |
 | `-p orient` | `portrait` (default) or `landscape` |
 | `-s WxH` | Page size (default `8.5x11in`) |
+| `-S file`, `--save file` | Save the parameters to a JSON file |
+| `-j file`, `--load file` | Load parameters from a JSON file; options given on the command line override it |
 | `-u unit` | Default unit for lengths without a suffix (default `in`) |
 
 Lengths accept the suffixes `in`, `mm`, `cm` and `pt`, e.g. `0.5in`, `12mm`.
@@ -71,6 +73,39 @@ Fixed width and height (the image is stretched to fit):
 
 ```
 build/mklabels -i label.png -w 4in -H 2in -o sheet.pdf
+```
+
+## Saving and loading parameters
+
+Save the settings for a label sheet once, then reuse them:
+
+```
+build/mklabels -i label.png -w 2.5in -l 0.5in -t 0.5in -h 0.25in -v 10mm -p landscape -o sheet.pdf --save avery.json
+build/mklabels --load avery.json
+```
+
+Override individual settings, e.g. a different image and output while keeping
+the layout:
+
+```
+build/mklabels --load avery.json -i other.png -o other.pdf
+```
+
+The JSON file is plain text and can be edited by hand. Keys: `image`,
+`output`, `left`, `top`, `hspace`, `vspace`, `width`, `height`, `dpi`,
+`orientation`, `pagesize`. Lengths are saved with explicit units:
+
+```json
+{
+  "image" : "label.png",
+  "output" : "sheet.pdf",
+  "left" : "0.5in",
+  "top" : "0.5in",
+  "hspace" : "0.25in",
+  "vspace" : "10mm",
+  "width" : "2.5in",
+  "orientation" : "landscape"
+}
 ```
 
 On success it prints the grid size and tile count, e.g.
