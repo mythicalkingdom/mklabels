@@ -8,8 +8,12 @@ spacing you specify. Useful for printing sheets of labels.
 Requires Free Pascal (fpc 3.2+).
 
 ```
-fpc -O2 -FEbuild -FUbuild src/mklabels.pas
+make
 ```
+
+This is equivalent to `fpc -O2 -FEbuild -FUbuild src/mklabels.pas`. Other
+targets: `make clean`, and `make install` (to `/usr/local/bin`; override with
+`PREFIX=~/.local`).
 
 The binary is written to `build/mklabels`.
 
