@@ -89,6 +89,11 @@ Fixed width and height (the image is stretched to fit):
 build/mklabels -i label.png -w 4in -H 2in -o sheet.pdf
 ```
 
+## GUI
+
+`mklabelsgui` is a small graphical front end: set the parameters, press Generate, and the PDF is displayed.
+Build it with `make gui` (needs Lazarus, BGRABitmap and BGRAControls) and see [gui/README.md](gui/README.md).
+
 ## Avery layouts
 
 `--layout` sets the page size, margins, spacing, label size and grid for a
