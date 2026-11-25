@@ -31,6 +31,7 @@ uses
   FPReadPNM, FPReadTGA, FPReadPCX;
 
 const
+  Version = '1.0.0';
   PtPerInch = 72.0;
 
 type
@@ -55,7 +56,8 @@ var
 
 procedure Usage;
 begin
-  WriteLn('Usage: mklabels -i image [options]');
+  WriteLn('mklabels ', Version, ' - tile an image onto a PDF page');
+  WriteLn('Usage: mklabels -i image [options]   (--version shows the version)');
   WriteLn('  -i file     input image (png, jpg, bmp, gif, tif, pnm, tga, pcx)');
   WriteLn('  -o file     output pdf (default: tiled.pdf)');
   WriteLn('  -l len      left margin   (default 0)');
@@ -383,6 +385,7 @@ begin
       '-p': Key := 'orientation';
       '-u', '-j', '--load', '-L', '--layout': Need;   { handled earlier }
       '-S', '--save': begin Need; SaveFile := V; end;
+      '--version': begin WriteLn('mklabels ', Version); Halt(0); end;
       '-?', '--help': Usage;
     else
       if Copy(A, 1, 1) <> '-' then

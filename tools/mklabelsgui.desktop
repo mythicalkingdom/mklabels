@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=mklabels
+GenericName=Label sheet maker
+Comment=Tile an image onto a PDF page for printing label sheets
+Exec=mklabelsgui
+Icon=mklabels
+Terminal=false
+Categories=Graphics;Office;
+Keywords=labels;Avery;PDF;print;

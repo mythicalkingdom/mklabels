@@ -89,6 +89,16 @@ Fixed width and height (the image is stretched to fit):
 build/mklabels -i label.png -w 4in -H 2in -o sheet.pdf
 ```
 
+## Debian package
+
+```
+make deb          # build/mklabels_<version>_<arch>.deb
+sudo apt install ./build/mklabels_1.0.0_amd64.deb
+```
+
+The package contains `mklabels`, the documentation and, if `make gui` was run first, `mklabelsgui` with its
+menu entry and icon. It recommends `poppler-utils` (used by the GUI preview).
+
 ## GUI
 
 `mklabelsgui` is a small graphical front end: set the parameters, press Generate, and the PDF is displayed.
