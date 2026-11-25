@@ -1,0 +1,8 @@
+{
+  "image" : "samples/label.png",
+  "output" : "sample.pdf",
+  "left" : "0.5in",
+  "top" : "0.5in",
+  "hspace" : "0.25in",
+  "vspace" : "0.25in"
+}

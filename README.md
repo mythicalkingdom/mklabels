@@ -47,6 +47,14 @@ program exits with an error. Transparent areas are composited onto white.
 
 ## Examples
 
+A sample 2.5 x 1.25 in label is in `samples/label.png`; try:
+
+```
+build/mklabels -i samples/label.png -l 0.5in -t 0.5in -h 0.25in -v 0.25in -o sample.pdf
+```
+
+Other examples:
+
 Tile a label 2.5 in wide (height follows the aspect ratio) with half-inch
 margins, 0.25 in horizontal and 10 mm vertical spacing:
 
@@ -93,6 +101,12 @@ the layout:
 
 ```
 build/mklabels --load avery.json -i other.png -o other.pdf
+```
+
+A ready-made file is in `samples/label.json`; run it from the repository root:
+
+```
+build/mklabels --load samples/label.json
 ```
 
 The JSON file is plain text and can be edited by hand. Keys: `image`,
