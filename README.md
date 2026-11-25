@@ -114,3 +114,7 @@ The JSON file is plain text and can be edited by hand. Keys: `image`,
 
 On success it prints the grid size and tile count, e.g.
 `Wrote sheet.pdf: 3 x 6 = 18 tiles (2.50 x 1.25 in each) on 8.50 x 11.00 in page`.
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE).
